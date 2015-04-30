@@ -6,8 +6,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
+
+	"github.com/BurntSushi/toml"
 
 	"github.com/olivere/metronome"
 	"github.com/olivere/metronome/plugins"
@@ -22,45 +25,19 @@ var (
 	username = flag.String("username", "", "Username for authentication")
 	password = flag.String("password", "", "Password for authentication")
 	logfile  = flag.String("log", "", "Log file")
+	conffile = flag.String("c", "metronomed.toml", "Configuration file")
 )
 
 func main() {
 	log.SetFlags(0)
 	flag.Parse()
 
-	// TODO use a config file for loading plugins
-
-	loadavgPlugin, err := loadavg.NewPlugin()
-	if err != nil {
-		log.Fatalf("error initializing loadavg plugin: %v", err)
+	if err := registerPlugins(*conffile); err != nil {
+		log.Fatal(err)
 		os.Exit(1)
 	}
-	plugins.Register(loadavgPlugin)
-
-	memPlugin, err := mem.NewPlugin()
-	if err != nil {
-		log.Fatalf("error initializing mem plugin: %v", err)
-		os.Exit(1)
-	}
-	plugins.Register(memPlugin)
-
-	swapPlugin, err := swap.NewPlugin()
-	if err != nil {
-		log.Fatalf("error initializing swap plugin: %v", err)
-		os.Exit(1)
-	}
-	plugins.Register(swapPlugin)
-
-	esConfig := &elasticsearch.Config{Urls: []string{"http://localhost:9200"}}
-	esPlugin, err := elasticsearch.NewPlugin("elasticsearch", esConfig)
-	if err != nil {
-		log.Fatalf("error initializing elasticsearch plugin: %v", err)
-		os.Exit(1)
-	}
-	plugins.Register(esPlugin)
 
 	// Initialize server
-
 	srv := metronome.NewServer()
 
 	if *addr != "" {
@@ -81,4 +58,64 @@ func main() {
 	go srv.Start()
 
 	select {}
+}
+
+type configuration struct {
+	LoadAvg       interface{} `toml:"loadavg"`
+	Mem           interface{}
+	Swap          interface{}
+	Elasticsearch map[string]*esconf
+}
+
+type esconf struct {
+	Urls []string
+}
+
+func registerPlugins(conffile string) error {
+	var config configuration
+	_, err := toml.DecodeFile(conffile, &config)
+	if err != nil {
+		return err
+	}
+
+	// LoadAvg
+	if config.LoadAvg != nil {
+		loadavgPlugin, err := loadavg.NewPlugin()
+		if err != nil {
+			return fmt.Errorf("error initializing loadavg plugin: %v", err)
+		}
+		plugins.Register(loadavgPlugin)
+	}
+
+	// Mem
+	if config.Mem != nil {
+		memPlugin, err := mem.NewPlugin()
+		if err != nil {
+			return fmt.Errorf("error initializing mem plugin: %v", err)
+		}
+		plugins.Register(memPlugin)
+	}
+
+	// Swap
+	if config.Swap != nil {
+		swapPlugin, err := swap.NewPlugin()
+		if err != nil {
+			return fmt.Errorf("error initializing swap plugin: %v", err)
+		}
+		plugins.Register(swapPlugin)
+	}
+
+	// Elasticsearch
+	if config.Elasticsearch != nil {
+		for name, escfg := range config.Elasticsearch {
+			esConfig := &elasticsearch.Config{Urls: escfg.Urls}
+			esPlugin, err := elasticsearch.NewPlugin(name, esConfig)
+			if err != nil {
+				return fmt.Errorf("error initializing elasticsearch plugin: %v", err)
+			}
+			plugins.Register(esPlugin)
+		}
+	}
+
+	return nil
 }
