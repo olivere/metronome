@@ -1,9 +1,0 @@
-[mem]
-
-[loadavg]
-
-[swap]
-
-#[elasticsearch]
-#	[elasticsearch.local]
-#	urls = ["http://localhost:9200"]
