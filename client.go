@@ -1,3 +1,7 @@
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
+// Use of this source code is governed by a MIT-license.
+// See http://olivere.mit-license.org/license.txt for details.
+
 package metronome
 
 import (
@@ -54,6 +58,7 @@ func (c *Client) header() http.Header {
 	return hdr
 }
 
+// autoconnect tries to connect to the server periodically.
 func (c *Client) autoconnect() {
 	ticker := time.NewTicker(10 * time.Second)
 
@@ -68,8 +73,12 @@ func (c *Client) autoconnect() {
 	}
 }
 
+// connect connects to the server. It is a no-op if the client is already
+// connected.
 func (c *Client) connect() {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.ws == nil {
 		header := c.header()
 		ws, _, err := websocket.DefaultDialer.Dial(c.addr, header)
@@ -80,14 +89,13 @@ func (c *Client) connect() {
 			go c.readPump()
 		}
 	}
-	c.mu.Unlock()
 }
 
 // readPump is a goroutine waiting for messages from the server.
 func (c *Client) readPump() {
 	defer func() {
 		c.mu.Lock()
-		c.Disconnected <- true
+		c.Disconnected <- true // indicate that we are disconnected
 		c.ws.Close()
 		c.ws = nil
 		c.mu.Unlock()
@@ -96,15 +104,18 @@ func (c *Client) readPump() {
 	c.ws.SetReadLimit(maxMessageSize)
 	c.ws.SetWriteDeadline(time.Now().Add(writeWait))
 
-	// Client should return a PongMessage when asked
+	// Client should return a PongMessage when asked.
+	// Ping/Pong is used to keep both parties alive.
 	c.ws.SetPingHandler(func(string) error {
 		c.ws.WriteControl(websocket.PongMessage, []byte{}, time.Now().Add(pingPeriod))
 		return nil
 	})
 
+	// Indicate that we are connected.
 	c.Connected <- true
 
 	for {
+		// Take a message via websocket
 		typ, msg, err := c.ws.ReadMessage()
 		if err != nil {
 			break
@@ -115,7 +126,7 @@ func (c *Client) readPump() {
 			// Server decided to close the connection.
 			return
 		case websocket.TextMessage:
-			// Server sent a message
+			// Server sent a message, so pass it on to the app using this client
 			c.Incoming <- msg
 			break
 		}

@@ -2,10 +2,10 @@
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
-package metronome
+package loadavg
 
-// Status is a status update sent to registered clients.
-type Status struct {
-	// Metrics data.
-	Metrics map[string]interface{} `json:"metrics"`
+type LoadAvg struct {
+	Last1Min  float64
+	Last5Min  float64
+	Last15Min float64
 }

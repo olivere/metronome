@@ -1,7 +1,10 @@
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
+// Use of this source code is governed by a MIT-license.
+// See http://olivere.mit-license.org/license.txt for details.
+
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -29,31 +32,30 @@ func main() {
 		select {
 		case <-client.Connected:
 			fmt.Fprintf(os.Stdout, "connected\n")
-			break
 		case <-client.Disconnected:
 			fmt.Fprintf(os.Stdout, "disconnected\n")
-			break
 		case st := <-client.Incoming:
-			//fmt.Fprintf(os.Stdout, "%s\n", string(st))
-			var msg metronome.Status
-			if err := json.Unmarshal(st, &msg); err != nil {
-				fmt.Fprintf(os.Stderr, "error decoding: %v", err)
-			} else {
-				memAvail := megabyte(msg.Mem.Total - msg.Mem.Used)
-				swapAvail := megabyte(msg.Swap.Total - msg.Swap.Used)
+			fmt.Fprintf(os.Stdout, "%s\n", string(st))
+			/*
+				var msg metronome.Status
+				if err := json.Unmarshal(st, &msg); err != nil {
+					fmt.Fprintf(os.Stderr, "error decoding: %v", err)
+				} else {
+					memAvail := megabyte(msg.Mem.Total - msg.Mem.Used)
+					swapAvail := megabyte(msg.Swap.Total - msg.Swap.Used)
 
-				fmt.Fprintf(os.Stdout, "LoadAvg: %.2f, %.2f, %.2f, Mem: %.1fM total, %.1fM avail, %.1fM free, Swap: %.1fM total, %.1fM avail, %.1fM free\n",
-					msg.LoadAvg.Load1Min,
-					msg.LoadAvg.Load5Min,
-					msg.LoadAvg.Load15Min,
-					megabyte(msg.Mem.Total),
-					memAvail,
-					megabyte(msg.Mem.Free),
-					megabyte(msg.Swap.Total),
-					swapAvail,
-					megabyte(msg.Swap.Used))
-			}
-			break
+					fmt.Fprintf(os.Stdout, "LoadAvg: %.2f, %.2f, %.2f, Mem: %.1fM total, %.1fM avail, %.1fM free, Swap: %.1fM total, %.1fM avail, %.1fM free\n",
+						msg.LoadAvg.Load1Min,
+						msg.LoadAvg.Load5Min,
+						msg.LoadAvg.Load15Min,
+						megabyte(msg.Mem.Total),
+						memAvail,
+						megabyte(msg.Mem.Free),
+						megabyte(msg.Swap.Total),
+						swapAvail,
+						megabyte(msg.Swap.Used))
+				}
+			*/
 		}
 	}
 }

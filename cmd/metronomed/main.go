@@ -1,3 +1,7 @@
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
+// Use of this source code is governed by a MIT-license.
+// See http://olivere.mit-license.org/license.txt for details.
+
 package main
 
 import (
@@ -6,6 +10,11 @@ import (
 	"os"
 
 	"github.com/olivere/metronome"
+	"github.com/olivere/metronome/plugins"
+	"github.com/olivere/metronome/plugins/elasticsearch"
+	"github.com/olivere/metronome/plugins/loadavg"
+	"github.com/olivere/metronome/plugins/mem"
+	"github.com/olivere/metronome/plugins/swap"
 )
 
 var (
@@ -18,6 +27,39 @@ var (
 func main() {
 	log.SetFlags(0)
 	flag.Parse()
+
+	// TODO use a config file for loading plugins
+
+	loadavgPlugin, err := loadavg.NewPlugin()
+	if err != nil {
+		log.Fatalf("error initializing loadavg plugin: %v", err)
+		os.Exit(1)
+	}
+	plugins.Register(loadavgPlugin)
+
+	memPlugin, err := mem.NewPlugin()
+	if err != nil {
+		log.Fatalf("error initializing mem plugin: %v", err)
+		os.Exit(1)
+	}
+	plugins.Register(memPlugin)
+
+	swapPlugin, err := swap.NewPlugin()
+	if err != nil {
+		log.Fatalf("error initializing swap plugin: %v", err)
+		os.Exit(1)
+	}
+	plugins.Register(swapPlugin)
+
+	esConfig := &elasticsearch.Config{Urls: []string{"http://localhost:9200"}}
+	esPlugin, err := elasticsearch.NewPlugin("elasticsearch", esConfig)
+	if err != nil {
+		log.Fatalf("error initializing elasticsearch plugin: %v", err)
+		os.Exit(1)
+	}
+	plugins.Register(esPlugin)
+
+	// Initialize server
 
 	srv := metronome.NewServer()
 

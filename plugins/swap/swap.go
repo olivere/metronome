@@ -2,10 +2,11 @@
 // Use of this source code is governed by a MIT-license.
 // See http://olivere.mit-license.org/license.txt for details.
 
-package metronome
+package swap
 
-// Status is a status update sent to registered clients.
-type Status struct {
-	// Metrics data.
-	Metrics map[string]interface{} `json:"metrics"`
+type Swap struct {
+	Total       int64
+	Free        int64
+	Used        int64
+	UsedPercent float64
 }

@@ -1,7 +1,12 @@
+// Copyright 2012-2015 Oliver Eilhard. All rights reserved.
+// Use of this source code is governed by a MIT-license.
+// See http://olivere.mit-license.org/license.txt for details.
+
 package metronome
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,57 +15,54 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/rcrowley/go-metrics"
+	"github.com/olivere/metronome/plugins"
 )
 
+var (
+	defaultUpdateInterval = time.Duration(5) * time.Second
+)
+
+// Server gathers information via plugins and sends it to registered
+// clients via websockets.
 type Server struct {
 	mu sync.Mutex
 
 	mux *http.ServeMux
 
+	updateInterval time.Duration
+
 	conns        map[*wsConn]bool
-	register     chan *wsConn
-	unregister   chan *wsConn
-	statusUpdate chan json.RawMessage
-
-	load struct {
-		Last1min  metrics.GaugeFloat64
-		Last5min  metrics.GaugeFloat64
-		Last15min metrics.GaugeFloat64
-	}
-
-	mem struct {
-		Total       metrics.Gauge
-		Used        metrics.Gauge
-		UsedPercent metrics.GaugeFloat64
-		Free        metrics.Gauge
-	}
-
-	swap struct {
-		Total       metrics.Gauge
-		Used        metrics.Gauge
-		UsedPercent metrics.GaugeFloat64
-		Free        metrics.Gauge
-	}
+	register     chan *wsConn         // for new clients joining
+	unregister   chan *wsConn         // for clients leaving
+	statusUpdate chan json.RawMessage // for status updates
 
 	Addr               string
 	Username, Password string
 	Logger             *log.Logger
 }
 
+// NewServer creates a new Metronome server. Use Start to start it up.
 func NewServer() *Server {
 	return &Server{
-		Addr:         ":8999",
-		register:     make(chan *wsConn),
-		unregister:   make(chan *wsConn),
-		statusUpdate: make(chan json.RawMessage),
-		conns:        make(map[*wsConn]bool),
+		Addr:           "127.0.0.1:8999",
+		register:       make(chan *wsConn),
+		unregister:     make(chan *wsConn),
+		statusUpdate:   make(chan json.RawMessage),
+		conns:          make(map[*wsConn]bool),
+		updateInterval: defaultUpdateInterval,
 	}
 }
 
+// UpdateInterval specifies the time between two snapshots.
+func (s *Server) UpdateInterval(interval time.Duration) *Server {
+	s.updateInterval = interval
+	return s
+}
+
+// Start starts the server.
 func (s *Server) Start() {
-	if err := s.initMetrics(); err != nil {
-		s.printf("error initializing metrics: %v\n", err)
+	if err := s.initPlugins(); err != nil {
+		s.printf("error initializing plugins: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -87,8 +89,10 @@ func (s *Server) Start() {
 	}
 }
 
+// ServeHTTP handles HTTP requests.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.Username != "" || s.Password != "" {
+		// Check for authentication.
 		u, p, ok := r.BasicAuth()
 		if !ok {
 			http.Error(w, "", http.StatusUnauthorized)
@@ -100,6 +104,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Use the muxer to handle different requests.
 	s.mux.ServeHTTP(w, r)
 }
 
@@ -132,64 +137,48 @@ func (s *Server) initMux() error {
 	return nil
 }
 
-func (s *Server) initMetrics() error {
+// initPlugins initializes all registered plugins.
+func (s *Server) initPlugins() error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	s.load.Last1min = metrics.NewGaugeFloat64()
-	metrics.Register("loadavg.last1min", s.load.Last1min)
-	s.load.Last5min = metrics.NewGaugeFloat64()
-	metrics.Register("loadavg.last5min", s.load.Last5min)
-	s.load.Last15min = metrics.NewGaugeFloat64()
-	metrics.Register("loadavg.last15min", s.load.Last15min)
+	plugins := plugins.Plugins()
+	if len(plugins) == 0 {
+		return errors.New("no plugins registered")
+	}
 
-	s.mem.Total = metrics.NewGauge()
-	metrics.Register("mem.total", s.mem.Total)
-	s.mem.Free = metrics.NewGauge()
-	metrics.Register("mem.free", s.mem.Free)
-	s.mem.Used = metrics.NewGauge()
-	metrics.Register("mem.used", s.mem.Used)
-	s.mem.UsedPercent = metrics.NewGaugeFloat64()
-	metrics.Register("mem.usedpercent", s.mem.UsedPercent)
-
-	s.swap.Total = metrics.NewGauge()
-	metrics.Register("swap.total", s.swap.Total)
-	s.swap.Free = metrics.NewGauge()
-	metrics.Register("swap.free", s.swap.Free)
-	s.swap.Used = metrics.NewGauge()
-	metrics.Register("swap.used", s.swap.Used)
-	s.swap.UsedPercent = metrics.NewGaugeFloat64()
-	metrics.Register("swap.usedpercent", s.swap.UsedPercent)
-
-	s.mu.Unlock()
 	return nil
 }
 
+// startUpdate periodically gathers metrics and sends updates to
+// registered clients. Use UpdateInterval to specify how often an
+// update happens.
 func (s *Server) startUpdate() {
-	ticker := time.NewTicker(1 * time.Second)
-
+	ticker := time.NewTicker(s.updateInterval)
 	for {
 		select {
 		case <-ticker.C:
 			s.update()
-			s.log()
 		}
 	}
 }
 
-// startHub watches for websocket connections.
-
+// startHub watches for websocket connections (joining clients, leaving
+// clients, and sending status updates).
 func (s *Server) startHub() {
 	var lastStatusMsg []byte
 	for {
 		select {
 		case c := <-s.register:
+			// New client joins
 			s.printf("registered client on %s", c.ws.RemoteAddr())
 			s.mu.Lock()
 			s.conns[c] = true
 			s.mu.Unlock()
-			c.send <- lastStatusMsg
+			c.send <- lastStatusMsg // send last known message to new client
 			break
 		case c := <-s.unregister:
+			// Client leaves
 			s.printf("unregistered client on %s", c.ws.RemoteAddr())
 			s.mu.Lock()
 			delete(s.conns, c)
@@ -197,6 +186,7 @@ func (s *Server) startHub() {
 			close(c.send)
 			break
 		case st := <-s.statusUpdate:
+			// Send status update to all registered clients
 			lastStatusMsg = st
 			s.mu.Lock()
 			for c := range s.conns {
@@ -208,62 +198,43 @@ func (s *Server) startHub() {
 	}
 }
 
+// update asks all plugins to return a snapshot of their watched data,
+// then sends it to all clients.
 func (s *Server) update() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	// Loadavg
-	loadavg, err := GetLoadAvg()
-	if err == nil {
-		s.load.Last1min.Update(loadavg.Last1Min)
-		s.load.Last5min.Update(loadavg.Last5Min)
-		s.load.Last15min.Update(loadavg.Last15Min)
+	msg := &Status{Metrics: make(map[string]interface{})}
+
+	// Take a snapshot from each client.
+	for _, plugin := range plugins.Plugins() {
+		data, err := plugin.Snapshot()
+		if err != nil {
+			continue
+		}
+		if data != nil {
+			msg.Metrics[plugin.Name()] = data
+		}
 	}
 
-	// Mem
-	mem, err := GetMem()
-	if err == nil {
-		s.mem.Total.Update(mem.Total)
-		s.mem.Free.Update(mem.Free)
-		s.mem.Used.Update(mem.Used)
-		s.mem.UsedPercent.Update(mem.UsedPercent)
-	}
-
-	// Swap
-	swap, err := GetSwap()
-	if err == nil {
-		s.swap.Total.Update(swap.Total)
-		s.swap.Free.Update(swap.Free)
-		s.swap.Used.Update(swap.Used)
-		s.swap.UsedPercent.Update(swap.UsedPercent)
-	}
-
-	s.mu.Unlock()
-}
-
-func (s *Server) log() {
-	msg := &Status{}
-	msg.LoadAvg.Load1Min = s.load.Last1min.Value()
-	msg.LoadAvg.Load5Min = s.load.Last5min.Value()
-	msg.LoadAvg.Load15Min = s.load.Last15min.Value()
-	msg.Mem.Total = s.mem.Total.Value()
-	msg.Mem.Free = s.mem.Free.Value()
-	msg.Mem.Used = s.mem.Used.Value()
-	msg.Swap.Total = s.swap.Total.Value()
-	msg.Swap.Free = s.swap.Free.Value()
-	msg.Swap.Used = s.swap.Used.Value()
+	// Convert the map into a JSON structure, then pass it to the WS handler.
 	data, err := json.Marshal(msg)
 	if err != nil {
+		log.Print(err)
 		return
 	}
-	s.statusUpdate <- data
+	s.statusUpdate <- data // startHub handles the sending (see above)
 }
 
-// home is the home page on /.
+// home is the home page on / and returns {}.
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "{}")
 }
 
 // stats is the websocket endpoint on /stats.
+//
+// It tries to do a WebSocket upgrade/handshake and starts a new
+// read/write pump for the new client.
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	ws, err := websocket.Upgrade(w, r, nil, 1024, 1024)
 	if _, ok := err.(websocket.HandshakeError); ok {
