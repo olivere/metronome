@@ -12,3 +12,4 @@ build-client:
 deps:
 	go get github.com/gorilla/websocket
 	go get github.com/rcrowley/go-metrics
+	go get github.com/BurntSushi/toml

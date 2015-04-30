@@ -7,8 +7,9 @@ websockets. Contains a server and a client.
 
 1. Install dependencies via `make deps`
 2. Compile via `make build`
-3. Run `./metronomed` in console 1
-4. Run `./metronome` in console 2
+3. Copy `./metronomed.example.toml` to `./metronomed.toml` and modify accordingly.
+4. Run `./metronomed` in console 1
+5. Run `./metronome` in console 2
 
 # License
 
